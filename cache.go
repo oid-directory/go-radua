@@ -1,0 +1,603 @@
+package radua
+
+/*
+cache.go offers a generic, thread-safe, in-memory *ldap.Entry caching subsystem.
+*/
+
+import (
+	"encoding/gob"
+	"errors"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/oid-directory/go-radir"
+)
+
+/*
+record describes any instance of *[radir.Registration] and *[radir.Registrant].
+*/
+type record interface {
+	DN() string
+}
+
+/*
+cachedEntry contains a record instance alongside an expiry [time.Time] instance.
+
+Instances of this type are stored within an instance of *[Cache] and need not
+be managed directly by the user.
+*/
+type cachedEntry struct {
+	Value  record
+	Expiry time.Time
+}
+
+var invalidCache *Cache = &Cache{}
+
+/*
+Expired returns a Boolean value indicative of whether the receiver instance
+has expired. A value of true is returned if the instance cannot be found.
+
+Note that, unlike [Cache.Entry], use of this method will not result in the
+deletion of an expired instance.
+*/
+func (r *Cache) Expired(dn string) bool {
+	var exp bool
+	if r.IsZero() {
+		return exp
+	}
+
+	if len(dn) == 0 {
+		return exp
+	}
+
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	key := lc(dn)
+
+	exp = true // coverage
+	if item, _ := r.entries[key]; item.Value != nil {
+		exp = time.Now().After(item.Expiry)
+	}
+
+	return exp
+}
+
+/*
+Cache is a thread-safe, memory-based caching type, meant to store any
+number of *[radir.Registration] or *[radir.Registrant] instances for
+the purpose of reducing LDAP network utilization. Caching is covered
+in the [RADUA] and [RASCHEMA] IDs.
+
+Instances of either type are associated with their respective LDAP DNs,
+which are queried immediately prior to an LDAP Search.
+
+Unexpired instances found within a *[Cache] that match the queried DN are
+returned instead of reaching out to the RA DSA.
+
+Requesting cached instances that have since expired will result in their
+immediate annihilation and a nil return. Under ordinary circumstances,
+at this point the DUA could reach out to the directory in an attempt to
+re-acquire the now-expired instance.
+
+The [NewCache] function initializes and returns instances of this type.
+
+Following initialization, an instance of *[Cache] may be written to file
+using the [Cache.Write].
+
+Conversely, the [Cache.Load] method allows an unfrozen *[Cache] to be
+loaded from file.
+
+The [Cache.Entry] method allows accessing unexpired cached instances.
+Attempting to access a cached instance that has since expired will
+result in its deletion unless the *[Cache] has been frozen.
+
+The [Cache.Len] method returns the current respective integer length of
+a *[Cache]. The [Cache.Cap] method returns the maximum number of elements
+permitted within a *[Cache].
+
+The [Cache.Expired] method safely allows expiration checks of specific
+cached instances without the risk of deletion. The [Cache.Keys] returns
+string slices of cached element DNs, also without deletion risk.
+
+The [Cache.Add] method allows the addition of elements into the *[Cache],
+provided it is not frozen.
+
+The [Cache.Remove] method allows for the removal of select instances from
+an unfrozen *[Cache], regardless of the expiration status.
+
+The [Cache.Touch] method allows for expired -- but as-of-yet undeleted --
+cached instances to be "reborn" or "resurrected" if the *[Cache] is not
+frozen.  A "touch" effectively results in the reset of the respective
+"expiration timer" to the specified duration.
+
+The [Cache.Freeze] and [Cache.Thaw] methods impose read-only and read-write
+policies respectively, influencing the ability for updates and amendments
+to the *[Cache] to be recognized. The [Cache.Frozen] method offers a means
+for checking the frozen state of a *[Cache]. A frozen *[Cache] will always
+permit read operations. When first initialized, a *[Cache] is always in a
+thawed state.
+
+[Cache.Tidy] and [Cache.Flush] can be used to clean-up or outright purge
+multiple instances from an unfrozen *[Cache]. The [Cache.IsZero] method
+reveals whether the instance has been initialized or not. [Cache.Free]
+destroys the *[Cache] -- regardless of freeze state.
+
+[RADUA]: https://datatracker.ietf.org/doc/html/draft-coretta-oiddir-radua
+[RASCHEMA]: https://datatracker.ietf.org/doc/html/draft-coretta-oiddir-schema
+*/
+type Cache struct {
+	threshold int
+	lock      *sync.Mutex
+	frozen    bool
+	entries   map[string]cachedEntry
+}
+
+/*
+NewCache returns a freshly initialized instance of *[Cache].
+
+The registrationMax and registrantMax integer input values define the
+maximum number of entries that will be cached respectively. Specifying
+0 disables the respective threshold.
+
+Attempts to exceed this threshold will silently disregard submissions
+for NEW (uncached) instances, however previously cached instances will
+still be refreshed.
+*/
+func NewCache(max ...int) *Cache {
+	var maximum int
+	if len(max) > 0 {
+		if max[0] >= 0 {
+			maximum = max[0]
+		}
+	}
+
+	return &Cache{
+		threshold: maximum,
+		lock:      &sync.Mutex{},
+		entries:   make(map[string]cachedEntry, maximum),
+	}
+}
+
+/*
+IsZero returns a Boolean value indicative of a nil receiver state.
+*/
+func (r *Cache) IsZero() bool {
+	return r == nil
+}
+
+/*
+Len returns the integer length of the receiver instance, thereby revealing
+how many *[radir.Registration] and/or *[radir.Registrant] instances are cached.
+
+This method does not take expiration into account, nor does its use trigger any
+expiration purges.
+*/
+func (r *Cache) Len() (l int) {
+	if !r.IsZero() {
+		l = len(r.entries)
+	}
+
+	return
+}
+
+/*
+Cap returns the maximum permitted number of *[radir.Registration] and/or
+*[radir.Registrant] instances that may be cached.
+
+A value of zero (0) indicates no limits are imposed upon caching requests
+of this form.
+*/
+func (r *Cache) Cap() (c int) {
+	if !r.IsZero() {
+		c = len(r.entries)
+	}
+
+	return
+}
+
+/*
+Registration returns an instance of *[radir.Registration] following
+a search for the input dn value within the receiver instance.
+
+A nil return value can indicate any of the following:
+
+  - Instance had expired and has since been purged, or has not yet been cached
+  - Instance was found but was nil, indicating caching is disabled for the entry
+
+Case is not significant in the distinguished name matching process.
+*/
+func (r *Cache) Registration(dn string) (entry *radir.Registration) {
+	e := r.call(dn, "registration")
+	entry, _ = e.(*radir.Registration)
+	return entry
+}
+
+/*
+Registrant returns an instance of *[radir.Registrant] following
+a search for the input dn value within the receiver instance.
+
+A nil return value can indicate any of the following:
+
+  - Instance had expired and has since been purged, or has not yet been cached
+  - Instance was found but was nil, indicating caching is disabled for the entry
+
+Case is not significant in the distinguished name matching process.
+*/
+func (r *Cache) Registrant(dn string) (entry *radir.Registrant) {
+	e := r.call(dn, "registrant")
+	entry, _ = e.(*radir.Registrant)
+	return entry
+}
+
+func (r *Cache) call(dn, typ string) any {
+	if r.IsZero() {
+		return nil
+	}
+
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	key := lc(dn)
+
+	isTypeOK := func(item cachedEntry) (ok bool) {
+		if item.Value != nil {
+			if typ == "registration" {
+				_, ok = item.Value.(*radir.Registration)
+			} else if typ == "registrant" {
+				_, ok = item.Value.(*radir.Registrant)
+			}
+		}
+		return
+	}
+
+	item, ok := r.entries[key]
+	if ok && isTypeOK(item) {
+		if time.Now().After(item.Expiry) {
+			r.delete(key)
+			return nil
+		}
+	}
+
+	return item.Value
+}
+
+/*
+Exists returns a Boolean value indicative of whether the specified
+distinguished name was found within the receiver instance.
+
+Case is not significant in the distinguished name matching process.
+
+This method does not take expiration into account, nor does its
+use trigger any expiration purges.
+*/
+func (r *Cache) Exists(dn string) (exists bool) {
+	if !r.IsZero() {
+		r.lock.Lock()
+		defer r.lock.Unlock()
+
+		_, exists = r.entries[lc(dn)]
+	}
+	return
+}
+
+/*
+Kind returns the string literals "registration" or "registrant"
+based on the kind of entry associated with the input distinguished
+name value.
+
+Case is not significant in the distinguished name matching process.
+
+This method does not take expiration into account, nor does its
+use trigger any expiration purges.
+
+The string literal "invalid" may also be returned if the receiver
+instance is in an abberant state.
+*/
+func (r *Cache) Kind(dn string) (kind string) {
+	kind = "invalid"
+
+	if !r.IsZero() {
+		if item, ok := r.entries[lc(dn)]; ok {
+			switch item.Value.(type) {
+			case *radir.Registration:
+				kind = "registration"
+			case *radir.Registrant:
+				kind = "registrant"
+			}
+		}
+	}
+
+	return
+}
+
+/*
+Keys returns slices of cached element DNs, each representing a *[radir.Registration] or
+*[radir.Registrant] instances instance present within the receiver.
+
+This method does not take expiration into account, nor does its
+use trigger any expiration purges.
+*/
+func (r *Cache) Keys() (keys []string) {
+	if !r.IsZero() {
+
+		r.lock.Lock()
+		defer r.lock.Unlock()
+
+		for _, v := range r.entries {
+			if dn := v.Value.DN(); len(dn) > 0 {
+				keys = append(keys, dn)
+			}
+		}
+	}
+
+	return
+}
+
+/*
+Touch will refresh the targeted *[radir.Registration] or *[radir.Registrant]
+instance by the input dn value, and replace its Expiry struct field with a
+fresh [time.Time] instance based upon the input minutes value, which may be
+a string or an int.
+
+In addition to preserving instances past their original expiration time,
+this method may be used to "resurrect" instances that have since expired
+but have not yet been purged from the receiver instance.
+
+This method has no effect if the targeted instance is not found, the receiver
+is zero, or the minutes value is <= 0.
+*/
+func (r *Cache) Touch(dn string, minutes any) {
+	if r.IsZero() || r.Frozen() {
+		return
+	}
+
+	min := assertTTL(minutes)
+
+	if len(dn) == 0 || min <= 0 {
+		return
+	}
+
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	key := lc(dn)
+
+	if item, _ := r.entries[key]; item.Value != nil {
+		item.Expiry = newExpiry(min)
+	}
+}
+
+/*
+Add assigns the input *[radir.Registration] or *[radir.Registrant] instance to
+the receiver instance. The minutes input value (which may be a string or an int)
+should correspond to one of the following states:
+
+  - <=0 (entry default) indicates no caching for the indicated instance (always call LDAP)
+  - All other positive values indicate a cached lifespan in minutes (cache and don't call LDAP for this entry until N minutes)
+
+If the target instance is already cached, it shall be replaced with the
+input instance, and will be subject to the new lifespan value. This will
+achieve the same outcome as use of [Cache.Touch].
+
+This method is meant for use either of the following scenarios:
+
+  - Automatically, whereby an 'rATTL' or 'c-rATTL' value has been set within the RA DIT and is being observed following retrieval one or more LDAP entries to be marshaled
+  - Manually, whereby an instance crafted by the user is being deliberately cached, whether or not LDAP is presently involved
+
+Input instances may be cached at any point, whether modified or not.
+*/
+func (r *Cache) Add(entry any, minutes any) {
+	if r.IsZero() || r.Frozen() {
+		return
+	}
+
+	switch tv := entry.(type) {
+	case record:
+		if tv != nil && len(tv.DN()) > 0 {
+			r.cache(tv, minutes)
+		}
+	}
+}
+
+/*
+Remove deletes the specified *[radir.Registration] and/or *[radir.Registrant]
+instances from the receiver instance.
+
+Case is not significant in the distinguished name matching process.
+*/
+func (r *Cache) Remove(dn ...string) {
+	if len(dn) == 0 {
+		return
+	} else if r.IsZero() {
+		return
+	} else if r.Frozen() {
+		return
+	}
+
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	r.delete(dn...)
+}
+
+func (r *Cache) full() bool {
+	return r.threshold <= len(r.entries) && r.threshold != 0
+}
+
+func (r *Cache) cache(entry record, minutes any) {
+	if !r.Exists(entry.DN()) {
+		// reg is not presently cached.
+		if r.full() {
+			// cannot cache: full house
+			return
+		}
+	}
+
+	min := assertTTL(minutes)
+
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	key := lc(entry.DN())
+	r.entries[key] = cachedEntry{
+		Value:  entry,
+		Expiry: newExpiry(min),
+	}
+}
+
+/*
+Freeze freezes the receiver instance, thereby preventing any subsequent
+updates and clean-ups from proceeding. This means no expirations (removals)
+of expired cache entries will occur, nor can any new elements be added to
+the instance. Cached elements may still be accessed using conventional means.
+
+See the [Cache.Thaw] method for a means of unfreezing the receiver instance.
+See the [Cache.Frozen] method for a means of confirming a frozen or thawed
+state.
+
+Note that the receiver can still be freed (destroyed) by [Cache.Free]
+while frozen.
+*/
+func (r *Cache) Freeze() {
+	if !r.IsZero() && !r.Frozen() {
+		r.lock.Lock()
+		defer r.lock.Unlock()
+
+		r.frozen = true
+	}
+}
+
+/*
+Thaw unfreezes the receiver instance, thereby allowing any subsequent
+updates and clean-ups to proceed. This means that expirations (removals)
+of expired cache entries will occur, and new elements may be added to
+the instance.
+
+See the [Cache.Freeze] method for a means of freezing the receiver instance.
+See the [Cache.Frozen] method for a means of confirming a frozen state.
+*/
+func (r *Cache) Thaw() {
+	if !r.IsZero() && r.Frozen() {
+		r.lock.Lock()
+		defer r.lock.Unlock()
+
+		r.frozen = false
+	}
+}
+
+/*
+Frozen returns a Boolean value indicative of a frozen receiver state.
+During a freeze state, no new elements may be added to the instance,
+nor can expired elements be purged.
+
+Note that the receiver can still be freed (destroyed) by [Cache.Free]
+while frozen.
+*/
+func (r *Cache) Frozen() bool {
+	return r.frozen
+}
+
+/*
+Free frees (destroys) the *[Cache] instance, rendering it nil and unusable.
+
+Note that this method is immutable, and will not honor any frozen state or
+mutex lock.
+*/
+func (r *Cache) Free() {
+	*r = Cache{}
+}
+
+/*
+Flush will purge all cached *[ldap.Entry]] instances from the receiver,
+regardless of expiration status. Following completion, the receiver
+remains initialized and usable.
+*/
+func (r *Cache) Flush() {
+	r.flush(true)
+}
+
+/*
+Tidy scans for, and purges the receiver instance of all *[ldap.Entry]
+instances which have expired.
+*/
+func (r *Cache) Tidy() {
+	r.flush(false)
+}
+
+func (r *Cache) flush(all bool) {
+	if r.IsZero() || r.Frozen() {
+		return
+	}
+
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	for k, v := range r.entries {
+		if time.Now().After(v.Expiry) || all {
+			r.delete(k)
+		}
+	}
+}
+
+func (r *Cache) delete(dn ...string) {
+	if !r.Frozen() {
+		for _, x := range dn {
+			delete(r.entries, lc(x))
+		}
+	}
+}
+
+/*
+newExpiry returns an instance of [time.Time] that defines when a given
+item will be considered expired and needing refresh.
+*/
+func newExpiry(min int) time.Time {
+	return time.Now().Add(time.Duration(min) * time.Minute)
+}
+
+/*
+Write returns an error following an attempt to write the current contents
+of the *[ldap.Entry] cache to the filename indicated.
+*/
+func (r *Cache) Write(filename string) error {
+	if r.IsZero() {
+		return nil // nothing to write!
+	}
+
+	file, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	codec := gob.NewEncoder(file)
+	return codec.Encode(r.entries)
+}
+
+/*
+Load returns an error following an attempt to read the filename indicated
+into the receiver's *[ldap.Entry] cache.
+*/
+func (r *Cache) Load(filename string) error {
+	if r.IsZero() {
+		return nilCacheErr
+	} else if r.Frozen() {
+		return frozenCacheErr
+	}
+
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	codec := gob.NewDecoder(file)
+	return codec.Decode(&r.entries)
+}
+
+var (
+	nilCacheErr    error = errors.New("Cache is uninitialized")
+	frozenCacheErr error = errors.New("Cache is frozen")
+)
