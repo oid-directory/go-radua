@@ -145,7 +145,8 @@ func descendUnmarshalFunc(entry *ldap.Entry, fieldValue reflect.Value) (err erro
 	// calls of this function.
 	switch tv := dest.Interface().(type) {
 	case *radir.X660, *radir.X667, *radir.X680, *radir.X690,
-		*radir.Spatial, *radir.Supplement:
+		*radir.Spatial, *radir.Supplement, *radir.CurrentAuthority,
+		*radir.FirstAuthority, *radir.Sponsor:
 		if err = entry.UnmarshalFunc(tv, unmarshalFunc); err == nil {
 			fieldValue.Set(reflect.ValueOf(tv))
 		}

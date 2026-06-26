@@ -45,6 +45,9 @@ func New(cfg *radir.DUAConfig, dua ...ldap.Client) (radua *DUA, err error) {
 		err = errors.New("One or more input instance are nil")
 	}
 
+	// add a dead cache just to avoid panics
+	radua.ech = invalidCache
+
 	return
 }
 
@@ -162,6 +165,8 @@ func (r *DUA) readRegistration(e string, pro *radir.DITProfile, dest *radir.Regi
 		return
 	}
 
+	dest.R_DITProfile = pro
+
 	funk := radir.DotNotToDN3D
 	if pro.Model() == radir.TwoDimensional {
 		funk = radir.DotNotToDN2D
@@ -179,6 +184,8 @@ func (r *DUA) readRegistrant(e string, pro *radir.DITProfile, dest *radir.Regist
 		err = destNotInitErr
 		return
 	}
+
+	dest.R_DITProfile = pro
 
 	dn := `registrantID=` + e + `,` + pro.RegistrantBase()
 	srf := `(objectClass=registrant)`
@@ -207,37 +214,34 @@ func (r *DUA) getOrRetrieve(dn, srf string, dest any) (err error) {
 	selector := radir.AttributeSelector{}
 	sra := selector.All()
 
-	getKind := func(string) string {
-		return r.ech.Kind(dn)
+	var fromCache bool
+	if !r.ech.IsZero() {
+		switch kind := r.ech.Kind(dn); kind {
+		case "registration":
+			if _, fromCache = dest.(*radir.Registration); fromCache {
+				(*dest.(*radir.Registration)) = (*r.ech.Registration(dn))
+			}
+		case "registrant":
+			if _, fromCache = dest.(*radir.Registrant); fromCache {
+				(*dest.(*radir.Registrant)) = (*r.ech.Registrant(dn))
+			}
+		}
 	}
 
-	if kind := getKind(dn); kind == "registration" {
-		if _, ok := dest.(*radir.Registration); ok {
-			(*dest.(*radir.Registration)) = (*r.ech.Registration(dn))
-		}
-	} else if kind == "registrant" {
-		if _, ok := dest.(*radir.Registrant); ok {
-			(*dest.(*radir.Registrant)) = (*r.ech.Registrant(dn))
-		}
-	}
-
-	if dest == nil {
+	if !fromCache {
 		// Entry was not cached, or cache is disabled.
 		sr := ldap.NewSearchRequest(dn, 0, 0, 0, 0, false, srf, sra, nil)
 
 		var res *ldap.SearchResult
-		if res, err = r.dua.Search(sr); err != nil {
-			return
-		}
+		if res, err = r.dua.Search(sr); err == nil {
+			if ct := len(res.Entries); ct != 1 {
+				err = throwEntryCountErr(ct, 1)
+				return
+			}
 
-		if ct := len(res.Entries); ct != 1 {
-			err = throwEntryCountErr(ct, 1)
-			return
-		}
-
-		ent := res.Entries[0]
-		if ent.UnmarshalFunc(dest, unmarshalFunc); err == nil {
-			r.ech.Add(dest, 15) // ignored if cache is disabled.
+			if err = res.Entries[0].UnmarshalFunc(dest, unmarshalFunc); err == nil {
+				r.ech.Add(dest, 15) // ignored if cache is disabled.
+			}
 		}
 	}
 
