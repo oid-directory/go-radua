@@ -1,6 +1,6 @@
 module github.com/oid-directory/go-radua
 
-go 1.25.5
+go 1.25
 
 require (
 	github.com/go-ldap/ldap/v3 v3.4.13
