@@ -251,7 +251,7 @@ func (r *DUA) getOrRetrieve(dn, srf string, dest any) (fromCache bool, err error
 			}
 
 			if err = res.Entries[0].UnmarshalFunc(dest, unmarshalFunc); err == nil {
-				r.ech.Add(dest, 15) // ignored if cache is disabled.
+				r.ech.Add(dest, deriveTTL(dest.(record))) // ignored if cache is disabled.
 			}
 		}
 	}
