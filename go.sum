@@ -26,6 +26,8 @@ github.com/jcmturner/rpc/v2 v2.0.3 h1:7FXXj8Ti1IaVFpSAziCZWNzbNuZmnvw/i6CqLNdWfZ
 github.com/jcmturner/rpc/v2 v2.0.3/go.mod h1:VUJYCIDm3PVOEHw8sgt091/20OJjskO/YJki3ELg/Hc=
 github.com/oid-directory/go-radir v0.0.0-20260624030901-57182bf9c11a h1:zhNaWo0fc+IpRgQkxcJ0JBT0rGmvm1My2EmPI4R8VDM=
 github.com/oid-directory/go-radir v0.0.0-20260624030901-57182bf9c11a/go.mod h1:2zi49APxGPNINTTklExKwjzrwkJxaI3Bi6CrM6irbBY=
+github.com/oid-directory/go-radir v0.0.10 h1:/G4s4ej8JAknt3QeFAiXUGUh1qLD54X1NpH/P/NF5Wk=
+github.com/oid-directory/go-radir v0.0.10/go.mod h1:2zi49APxGPNINTTklExKwjzrwkJxaI3Bi6CrM6irbBY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=
