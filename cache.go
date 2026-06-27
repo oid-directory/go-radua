@@ -1,7 +1,8 @@
 package radua
 
 /*
-cache.go offers a generic, thread-safe, in-memory *ldap.Entry caching subsystem.
+cache.go offers a generic, thread-safe, in-memory
+registration/registrant caching subsystem.
 */
 
 import (
@@ -47,16 +48,14 @@ deletion of an expired instance.
 */
 func (r *Cache) Expired(dn string) bool {
 	var exp bool
-	if r.IsZero() || len(dn) == 0 {
-		return exp
-	}
+	if !r.IsZero() && len(dn) > 0 {
+		r.lock.Lock()
+		defer r.lock.Unlock()
 
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
-	exp = true // coverage
-	if item, _ := r.entries[lc(dn)]; item.Value != nil {
-		exp = time.Now().After(item.Expiry)
+		exp = true // coverage
+		if item, _ := r.entries[lc(dn)]; item.Value != nil {
+			exp = time.Now().After(item.Expiry)
+		}
 	}
 
 	return exp
@@ -75,20 +74,18 @@ until expiry.
 */
 func (r *Cache) TTL(dn string) int {
 	var ttl int = -1
-	if r.IsZero() || len(dn) == 0 {
-		return ttl
+	if !r.IsZero() && len(dn) > 0 {
+        	r.lock.Lock()
+        	defer r.lock.Unlock()
+
+		ttl = 0
+        	if item, _ := r.entries[lc(dn)]; item.Value != nil {
+			ttl = int(item.Expiry.Sub(time.Now()).Minutes())
+			if ttl <= 0 {
+				ttl = 0
+			}
+        	}
 	}
-
-        r.lock.Lock()
-        defer r.lock.Unlock()
-
-	ttl = 0
-        if item, _ := r.entries[lc(dn)]; item.Value != nil {
-		ttl = int(item.Expiry.Sub(time.Now()).Minutes())
-		if ttl <= 0 {
-			ttl = 0
-		}
-        }
 	return ttl
 }
 
@@ -381,20 +378,13 @@ an expicit TTL is found in the entry, it supersedes any COLLECTIVE value.
 Finally, if no TTL was found anywhere, [DefaultRATTL] is used as a fallback.
 */
 func (r *Cache) Touch(dn string, minutes ...any) {
-	if r.IsZero() || r.Frozen() {
-		return
-	}
+	if r.writable() && len(dn) > 0 {
+		r.lock.Lock()
+		defer r.lock.Unlock()
 
-
-	if len(dn) == 0 {
-		return
-	}
-
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
-	if item, _ := r.entries[lc(dn)]; item.Value != nil {
-		item.Expiry = newExpiry(deriveTTL(item.Value, minutes...))
+		if item, _ := r.entries[lc(dn)]; item.Value != nil {
+			item.Expiry = newExpiry(deriveTTL(item.Value, minutes...))
+		}
 	}
 }
 
@@ -418,36 +408,32 @@ This method is meant for use either of the following scenarios:
 Input instances may be cached at any point, whether modified or not.
 */
 func (r *Cache) Add(entry any, minutes ...any) {
-	if r.IsZero() || r.Frozen() {
-		return
-	}
-
-	switch tv := entry.(type) {
-	case record:
-		if tv != nil && len(tv.DN()) > 0 {
-			r.cache(tv, deriveTTL(tv, minutes...))
+	if r.writable() {
+		switch tv := entry.(type) {
+		case record:
+			if tv != nil && len(tv.DN()) > 0 {
+				r.cache(tv, deriveTTL(tv, minutes...))
+			}
 		}
 	}
 }
 
 /*
-Update replaces the specified entry in the receiver with a newer copy
-without modifying its current TTL. If the entry is expired, this method
-will do nothing.
+Update replaces the specified *[radir.Registration] or *[radir.Registrant]
+entry in the receiver with a newer copy without modifying its current TTL.
+If the entry is expired, this method will do nothing.
 
 Use of this method will not have any effect if the receiver is currently
 frozen or nil.
 */
 func (r *Cache) Update(entry any) {
-	if r.IsZero() || r.Frozen() {
-		return
-	}
-
-	if assert, ok := entry.(record); ok {
-		dn := lc(assert.DN())
-		if item, found := r.entries[dn]; found && !r.Expired(dn) {
-			item.Value = assert
-			r.entries[dn] = item
+	if r.writable() {
+		if assert, ok := entry.(record); ok {
+			dn := lc(assert.DN())
+			if item, found := r.entries[dn]; found && !r.Expired(dn) {
+				item.Value = assert
+				r.entries[dn] = item
+			}
 		}
 	}
 }
@@ -459,11 +445,7 @@ instances from the receiver instance.
 Case is not significant in the distinguished name matching process.
 */
 func (r *Cache) Remove(dn ...string) {
-	if len(dn) == 0 {
-		return
-	} else if r.IsZero() {
-		return
-	} else if r.Frozen() {
+	if len(dn) == 0 || !r.writable() {
 		return
 	}
 
@@ -476,6 +458,8 @@ func (r *Cache) Remove(dn ...string) {
 func (r *Cache) full() bool {
 	return r.threshold <= len(r.entries) && r.threshold != 0
 }
+
+func (r *Cache) writable() bool { return !(r.IsZero() || r.Frozen()) }
 
 func (r *Cache) cache(entry record, minutes int) {
 	if !r.Exists(entry.DN()) {
@@ -509,7 +493,7 @@ Note that the receiver can still be freed (destroyed) by [Cache.Free]
 while frozen.
 */
 func (r *Cache) Freeze() {
-	if !r.IsZero() && !r.Frozen() {
+	if r.writable() {
 		r.lock.Lock()
 		defer r.lock.Unlock()
 
@@ -558,24 +542,26 @@ func (r *Cache) Free() {
 }
 
 /*
-Flush will purge all cached *[ldap.Entry]] instances from the receiver,
-regardless of expiration status. Following completion, the receiver
+Flush will purge ALL cached entries from the receiver, regardless
+of expiration status, and returns an integer value indicating the
+number of entries removed. Following completion, the receiver
 remains initialized and usable.
 */
-func (r *Cache) Flush() {
-	r.flush(true)
+func (r *Cache) Flush() int {
+	return r.flush(true)
 }
 
 /*
-Tidy scans for, and purges the receiver instance of all *[ldap.Entry]
-instances which have expired.
+Tidy scans for, and purges the receiver instance of all entries which
+have expired, and returns an integer value indicating the number of
+entries removed.
 */
-func (r *Cache) Tidy() {
-	r.flush(false)
+func (r *Cache) Tidy() int {
+	return r.flush(false)
 }
 
-func (r *Cache) flush(all bool) {
-	if r.IsZero() || r.Frozen() {
+func (r *Cache) flush(all bool) (count int) {
+	if !r.writable() {
 		return
 	}
 
@@ -585,8 +571,11 @@ func (r *Cache) flush(all bool) {
 	for k, v := range r.entries {
 		if time.Now().After(v.Expiry) || all {
 			r.delete(k)
+			count++
 		}
 	}
+
+	return
 }
 
 func (r *Cache) delete(dn ...string) {
@@ -607,32 +596,26 @@ func newExpiry(m int) time.Time {
 
 /*
 Write returns an error following an attempt to write the current contents
-of the *[ldap.Entry] cache to the filename indicated.
+of the receiver instance to the filename indicated.
 */
-func (r *Cache) Write(filename string) error {
-	if r.IsZero() {
-		return nil // nothing to write!
+func (r *Cache) Write(filename string) (err error) {
+	if !r.IsZero() {
+		var file *os.File
+		if file, err = os.Create(filename); err == nil {
+			defer file.Close()
+			err = gob.NewEncoder(file).Encode(r.entries)
+		}
 	}
-
-	file, err := os.Create(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	codec := gob.NewEncoder(file)
-	return codec.Encode(r.entries)
+	return
 }
 
 /*
 Load returns an error following an attempt to read the filename indicated
-into the receiver's *[ldap.Entry] cache.
+into the receiver instance.
 */
 func (r *Cache) Load(filename string) error {
-	if r.IsZero() {
-		return nilCacheErr
-	} else if r.Frozen() {
-		return frozenCacheErr
+	if !r.writable() {
+		return unwritableCacheErr
 	}
 
 	file, err := os.Open(filename)
@@ -646,6 +629,5 @@ func (r *Cache) Load(filename string) error {
 }
 
 var (
-	nilCacheErr    error = errors.New("Cache is uninitialized")
-	frozenCacheErr error = errors.New("Cache is frozen")
+	unwritableCacheErr    error = errors.New("Cache is uninitialized or frozen")
 )
