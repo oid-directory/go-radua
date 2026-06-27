@@ -168,7 +168,7 @@ func NewCache(m ...int) *Cache {
 IsZero returns a Boolean value indicative of a nil receiver state.
 */
 func (r *Cache) IsZero() bool {
-	return r == nil
+	return r == nil || r == invalidCache
 }
 
 /*
