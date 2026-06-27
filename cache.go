@@ -14,11 +14,15 @@ import (
 	"github.com/oid-directory/go-radir"
 )
 
+var DefaultRATTL = 1440 // one (1) day
+
 /*
 record describes any instance of *[radir.Registration] and *[radir.Registrant].
 */
 type record interface {
 	DN() string
+	TTL() string
+	CTTL() string
 }
 
 /*
@@ -145,11 +149,11 @@ Attempts to exceed this threshold will silently disregard submissions
 for NEW (uncached) instances, however previously cached instances will
 still be refreshed.
 */
-func NewCache(max ...int) *Cache {
+func NewCache(m ...int) *Cache {
 	var maximum int
-	if len(max) > 0 {
-		if max[0] >= 0 {
-			maximum = max[0]
+	if len(m) > 0 {
+		if m[0] >= 0 {
+			maximum = m[0]
 		}
 	}
 
@@ -347,26 +351,26 @@ this method may be used to "resurrect" instances that have since expired
 but have not yet been purged from the receiver instance.
 
 This method has no effect if the targeted instance is not found, the receiver
-is zero, or the minutes value is <= 0.
+is zero, or the minutes value is <= 0. If no minutes value is provided at all,
+the TTL is derived from the entry -- COLLECTIVE is obtained first, if set. If
+an expicit TTL is found in the entry, it supersedes any COLLECTIVE value.
+Finally, if no TTL was found anywhere, [DefaultRATTL] is used as a fallback.
 */
-func (r *Cache) Touch(dn string, minutes any) {
+func (r *Cache) Touch(dn string, minutes ...any) {
 	if r.IsZero() || r.Frozen() {
 		return
 	}
 
-	min := assertTTL(minutes)
 
-	if len(dn) == 0 || min <= 0 {
+	if len(dn) == 0 {
 		return
 	}
 
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	key := lc(dn)
-
-	if item, _ := r.entries[key]; item.Value != nil {
-		item.Expiry = newExpiry(min)
+	if item, _ := r.entries[lc(dn)]; item.Value != nil {
+		item.Expiry = newExpiry(deriveTTL(item.Value, minutes...))
 	}
 }
 
@@ -384,12 +388,12 @@ achieve the same outcome as use of [Cache.Touch].
 
 This method is meant for use either of the following scenarios:
 
-  - Automatically, whereby an 'rATTL' or 'c-rATTL' value has been set within the RA DIT and is being observed following retrieval one or more LDAP entries to be marshaled
+  - Automatically, whereby an 'rATTL' or 'c-rATTL' value has been set within the RA DIT or the entry itself, and is being observed following retrieval one or more LDAP entries to be marshaled
   - Manually, whereby an instance crafted by the user is being deliberately cached, whether or not LDAP is presently involved
 
 Input instances may be cached at any point, whether modified or not.
 */
-func (r *Cache) Add(entry any, minutes any) {
+func (r *Cache) Add(entry any, minutes ...any) {
 	if r.IsZero() || r.Frozen() {
 		return
 	}
@@ -397,14 +401,15 @@ func (r *Cache) Add(entry any, minutes any) {
 	switch tv := entry.(type) {
 	case record:
 		if tv != nil && len(tv.DN()) > 0 {
-			r.cache(tv, minutes)
+			r.cache(tv, deriveTTL(tv, minutes...))
 		}
 	}
 }
 
 /*
 Update replaces the specified entry in the receiver with a newer copy
-without modifying its current TTL.
+without modifying its current TTL. If the entry is expired, this method
+will do nothing.
 
 Use of this method will not have any effect if the receiver is currently
 frozen or nil.
@@ -416,7 +421,7 @@ func (r *Cache) Update(entry any) {
 
 	if assert, ok := entry.(record); ok {
 		dn := lc(assert.DN())
-		if item, found := r.entries[dn]; found {
+		if item, found := r.entries[dn]; found && !r.Expired(dn) {
 			item.Value = assert
 			r.entries[dn] = item
 		}
@@ -448,7 +453,7 @@ func (r *Cache) full() bool {
 	return r.threshold <= len(r.entries) && r.threshold != 0
 }
 
-func (r *Cache) cache(entry record, minutes any) {
+func (r *Cache) cache(entry record, minutes int) {
 	if !r.Exists(entry.DN()) {
 		// reg is not presently cached.
 		if r.full() {
@@ -457,14 +462,12 @@ func (r *Cache) cache(entry record, minutes any) {
 		}
 	}
 
-	ttl := assertTTL(minutes)
-
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
 	r.entries[lc(entry.DN())] = cachedEntry{
 		Value:  entry,
-		Expiry: newExpiry(ttl),
+		Expiry: newExpiry(minutes),
 	}
 }
 
@@ -574,8 +577,8 @@ func (r *Cache) delete(dn ...string) {
 newExpiry returns an instance of [time.Time] that defines when a given
 item will be considered expired and needing refresh.
 */
-func newExpiry(min int) time.Time {
-	return time.Now().Add(time.Duration(min) * time.Minute)
+func newExpiry(m int) time.Time {
+	return time.Now().Add(time.Duration(m) * time.Minute)
 }
 
 /*

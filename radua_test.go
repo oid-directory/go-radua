@@ -25,6 +25,7 @@ func TestCache_Registration_offline(t *testing.T) {
 	// Hand-crafted registration
 	myReg := cfg.Profile().NewRegistration()
 	myReg.SetDN("n=999,n=56521,n=1,n=4,n=1,n=6,n=3,n=1,ou=Registrations,o=rA")
+	myReg.SetTTL(5)
 	myReg.X680().SetN("999")
 	myReg.X680().SetIdentifier("example")
 	myReg.X680().SetDotNotation("1.3.6.1.4.1.56521.999")
@@ -35,8 +36,8 @@ func TestCache_Registration_offline(t *testing.T) {
 	myReg.NewChild("11", "question")
 
 	// Add above registration and registrant to cache for five minutes.
-	cache.Add(me, 5)
 	cache.Add(myReg, 5)
+	cache.Add(me, 5)
 
 	// Call the DN from the cache as a Registration.
 	cached := cache.Registration(myReg.DN())

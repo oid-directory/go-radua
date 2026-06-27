@@ -19,6 +19,24 @@ var (
 	hasPfx func(string, string) bool     = strings.HasPrefix
 )
 
+func deriveTTL(ent record, minutes ...any) (m int) {
+       if len(minutes) > 0 {
+               m = assertTTL(minutes[0])
+       } else {
+		if ttl := ent.CTTL(); ttl != "" {
+			m = assertTTL(ttl)
+		} else if ttl = ent.TTL(); ttl != "" {
+			m = assertTTL(ttl)
+		}
+       }
+
+       if m <= 0 {
+               m = DefaultRATTL
+       }
+
+       return
+}
+
 func selectTTL(lttl, cttl string) string {
 	var ttl string
 	if len(cttl) > 0 {
