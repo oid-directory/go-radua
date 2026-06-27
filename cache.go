@@ -47,25 +47,37 @@ deletion of an expired instance.
 */
 func (r *Cache) Expired(dn string) bool {
 	var exp bool
-	if r.IsZero() {
-		return exp
-	}
-
-	if len(dn) == 0 {
+	if r.IsZero() || len(dn) == 0 {
 		return exp
 	}
 
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	key := lc(dn)
-
 	exp = true // coverage
-	if item, _ := r.entries[key]; item.Value != nil {
+	if item, _ := r.entries[lc(dn)]; item.Value != nil {
 		exp = time.Now().After(item.Expiry)
 	}
 
 	return exp
+}
+
+func (r *Cache) TTL(dn string) int {
+	var ttl int = -1
+	if r.IsZero() || len(dn) == 0 {
+		return ttl
+	}
+
+        r.lock.Lock()
+        defer r.lock.Unlock()
+
+        if item, _ := r.entries[lc(dn)]; item.Value != nil {
+		ttl = int(item.Expiry.Sub(time.Now()).Minutes())
+		if ttl <= 0 {
+			ttl = 0
+		}
+        }
+	return ttl
 }
 
 /*

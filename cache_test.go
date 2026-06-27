@@ -103,16 +103,18 @@ func TestCache_writes(t *testing.T) {
 }
 
 func TestCache_call(t *testing.T) {
-	var c *Cache = NewCache(86400)
-	c.Add(&radir.Registrant{R_DN: `fakeAuthy`}, 1)
+	var c *Cache = NewCache(0)
+	c.Add(&radir.Registrant{R_DN: `fakeAuthy`}, 2)
 	if k := c.Kind(`fakeAuthy`); k != `registrant` {
 		t.Errorf("%s failed [kind]: expected registrant, got %s", t.Name(), k)
 	}
+	t.Logf("TTL:%d", c.TTL(`fakeAuthy`)) // coverage
 	c.Free()
 }
 
 func TestCache_codecov(t *testing.T) {
 	var c *Cache
+	c.TTL("")
 	c.IsZero()
 	c.Expired("fargus")
 	c.Expired("")
