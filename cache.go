@@ -62,6 +62,17 @@ func (r *Cache) Expired(dn string) bool {
 	return exp
 }
 
+/*
+TTL returns the remaining time-to-live (in minutes) for the specified
+entry.
+
+A return of -1 indicates an error (e.g.: zero input or a disabled cache).
+
+A return value of 0 means the entry has already expired or does not exist.
+
+Any other positive return value indicates the number of minutes remaining
+until expiry.
+*/
 func (r *Cache) TTL(dn string) int {
 	var ttl int = -1
 	if r.IsZero() || len(dn) == 0 {
@@ -71,6 +82,7 @@ func (r *Cache) TTL(dn string) int {
         r.lock.Lock()
         defer r.lock.Unlock()
 
+	ttl = 0
         if item, _ := r.entries[lc(dn)]; item.Value != nil {
 		ttl = int(item.Expiry.Sub(time.Now()).Minutes())
 		if ttl <= 0 {
