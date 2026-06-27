@@ -27,6 +27,31 @@ func ExampleCache_Registration() {
 	// Output: true
 }
 
+func ExampleCache_Update() {
+	// very watered-down registration
+	reg := &radir.Registration{
+		R_DN: "n=999,n=56521,n=1,n=4,n=1,n=6,n=3,n=1,ou=Registrations,o=rA",
+	}
+
+	// Cache the reg for 15 minutes
+	myCache.Add(reg, 15)
+
+	// We update our reg (above) with additional information
+	// we forgot to add the first time around.
+	reg.X680().SetNameAndNumberForm("example(999)")
+
+	// Now we update the copy of the reg in the cache
+	// without altering its TTL.
+	myCache.Update(reg)
+
+	// Call the new reg from cache (overwriting our local reg var above)
+	reg = myCache.Registration("n=999,n=56521,n=1,n=4,n=1,n=6,n=3,n=1,ou=Registrations,o=rA")
+
+	// Check that cache-born reg has the newly added value.
+	fmt.Printf("NameAndNumberForm: %q", reg.X680().NameAndNumberForm())
+	// Output: NameAndNumberForm: "example(999)"
+}
+
 func ExampleCache_Registrant() {
 	dn := "cn=Mister Authority,ou=Registrants,o=rA"
 	example := myCache.Registrant(dn) // nonexistent DN call
@@ -43,10 +68,10 @@ func ExampleCache_Touch() {
 }
 
 func ExampleCache_Cap() {
-	// note: cache was initialized with a capacity of 1
-	// via NewCache(1).
+	// note: cache was initialized with a capacity of 2
+	// via NewCache(2).
 	fmt.Println(myCache.Cap())
-	// Output: 1
+	// Output: 2
 }
 
 func TestCache_writes(t *testing.T) {
@@ -140,5 +165,5 @@ func TestCache_codecov(t *testing.T) {
 }
 
 func init() {
-	myCache = NewCache(1)
+	myCache = NewCache(2)
 }

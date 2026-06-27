@@ -313,8 +313,9 @@ func (r *Cache) Kind(dn string) (kind string) {
 }
 
 /*
-Keys returns slices of cached element DNs, each representing a *[radir.Registration] or
-*[radir.Registrant] instances instance present within the receiver.
+Keys returns slices of cached element DNs, each representing a
+*[radir.Registration] or *[radir.Registrant] instances instance
+present within the receiver.
 
 This method does not take expiration into account, nor does its
 use trigger any expiration purges.
@@ -402,6 +403,27 @@ func (r *Cache) Add(entry any, minutes any) {
 }
 
 /*
+Update replaces the specified entry in the receiver with a newer copy
+without modifying its current TTL.
+
+Use of this method will not have any effect if the receiver is currently
+frozen or nil.
+*/
+func (r *Cache) Update(entry any) {
+	if r.IsZero() || r.Frozen() {
+		return
+	}
+
+	if assert, ok := entry.(record); ok {
+		dn := lc(assert.DN())
+		if item, found := r.entries[dn]; found {
+			item.Value = assert
+			r.entries[dn] = item
+		}
+	}
+}
+
+/*
 Remove deletes the specified *[radir.Registration] and/or *[radir.Registrant]
 instances from the receiver instance.
 
@@ -435,15 +457,14 @@ func (r *Cache) cache(entry record, minutes any) {
 		}
 	}
 
-	min := assertTTL(minutes)
+	ttl := assertTTL(minutes)
 
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	key := lc(entry.DN())
-	r.entries[key] = cachedEntry{
+	r.entries[lc(entry.DN())] = cachedEntry{
 		Value:  entry,
-		Expiry: newExpiry(min),
+		Expiry: newExpiry(ttl),
 	}
 }
 
