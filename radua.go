@@ -110,9 +110,12 @@ func (r *DUA) Client() (dua ldap.Client) {
 }
 
 /*
-Read is a convenience method which returns an instance of error following
-an attempt to read the entry described by e into dest, which must be either
-an instance of *[radir.Registration] or *[radir.Registrant].
+Read is a convenience method which returns a Boolean instance alongside an
+error following an attempt to read the entry described by e into dest,
+which must be either an instance of *[radir.Registration] or *[radir.Registrant].
+
+The Boolean value indicates whether the returned entry was derived from the
+underlying [Cache] instance (true).
 
 The context of e is determined by the dest type:
 
@@ -133,7 +136,7 @@ the OID Directory I-D series.
 [registrantID]: https://datatracker.ietf.org/doc/html/draft-coretta-oiddir-schema#section-2.3.34
 [dotNotation]: https://datatracker.ietf.org/doc/html/draft-coretta-oiddir-schema#section-2.3.2
 */
-func (r *DUA) Read(e string, dest any) (err error) {
+func (r *DUA) Read(e string, dest any) (fromCache bool, err error) {
 	if r.IsZero() {
 		err = errors.New("Receiver instance is nil")
 		return
@@ -143,9 +146,9 @@ func (r *DUA) Read(e string, dest any) (err error) {
 
 	switch tv := dest.(type) {
 	case *radir.Registration:
-		err = r.readRegistration(e, pro, tv)
+		fromCache, err = r.readRegistration(e, pro, tv)
 	case *radir.Registrant:
-		err = r.readRegistrant(e, pro, tv)
+		fromCache, err = r.readRegistrant(e, pro, tv)
 	case *radir.Subentry:
 		//err = r.readSubentry(e, pro, tv)
 		//case *radir.Subentry:
@@ -159,7 +162,10 @@ func (r *DUA) Read(e string, dest any) (err error) {
 	return
 }
 
-func (r *DUA) readRegistration(e string, pro *radir.DITProfile, dest *radir.Registration) (err error) {
+func (r *DUA) readRegistration(e string, pro *radir.DITProfile, dest *radir.Registration) (
+	fromCache bool,
+	err error,
+) {
 	if dest.IsZero() {
 		err = destNotInitErr
 		return
@@ -175,11 +181,14 @@ func (r *DUA) readRegistration(e string, pro *radir.DITProfile, dest *radir.Regi
 	dest.SetDN(e, funk)
 	srf := `(objectClass=registration)`
 
-	err = r.getOrRetrieve(dest.DN(), srf, dest)
+	fromCache, err = r.getOrRetrieve(dest.DN(), srf, dest)
 	return
 }
 
-func (r *DUA) readRegistrant(e string, pro *radir.DITProfile, dest *radir.Registrant) (err error) {
+func (r *DUA) readRegistrant(e string, pro *radir.DITProfile, dest *radir.Registrant) (
+	fromCache bool,
+	err error,
+) {
 	if dest.IsZero() {
 		err = destNotInitErr
 		return
@@ -191,11 +200,14 @@ func (r *DUA) readRegistrant(e string, pro *radir.DITProfile, dest *radir.Regist
 	srf := `(objectClass=registrant)`
 	dest.SetDN(e)
 
-	err = r.getOrRetrieve(dn, srf, dest)
+	fromCache, err = r.getOrRetrieve(dn, srf, dest)
 	return
 }
 
-func (r *DUA) readSubentry(cn, parent string, pro *radir.DITProfile, dest *radir.Subentry) (err error) {
+func (r *DUA) readSubentry(cn, parent string, pro *radir.DITProfile, dest *radir.Subentry) (
+	fromCache bool,
+	err error,
+) {
 	if dest.IsZero() || cn == "" || parent == "" {
 		err = destNotInitErr
 		return
@@ -205,16 +217,15 @@ func (r *DUA) readSubentry(cn, parent string, pro *radir.DITProfile, dest *radir
 	srf := `(objectClass=subentry)`
 	dest.SetDN(dn)
 
-	err = r.getOrRetrieve(dn, srf, dest.Marshal)
+	fromCache, err = r.getOrRetrieve(dn, srf, dest.Marshal)
 	return
 }
 
-func (r *DUA) getOrRetrieve(dn, srf string, dest any) (err error) {
+func (r *DUA) getOrRetrieve(dn, srf string, dest any) (fromCache bool, err error) {
 
 	selector := radir.AttributeSelector{}
 	sra := selector.All()
 
-	var fromCache bool
 	if !r.ech.IsZero() {
 		switch kind := r.ech.Kind(dn); kind {
 		case "registration":
