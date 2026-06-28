@@ -20,8 +20,8 @@ func TestAssertTTL(_ *testing.T) {
 }
 
 func TestSelectTTL(_ *testing.T) {
-	_ = selectTTL(`5`, `6`)
-	_ = selectTTL(`0`, `3`)
-	_ = selectTTL(`3`, `86400`)
-	_ = selectTTL(``, ``)
+	_ = selectTTL(`10`, ``, `6`)
+	_ = selectTTL(`5`,`0`, ``)
+	_ = selectTTL(``, `13`, `86400`)
+	_ = selectTTL(``, `1`, ``)
 }

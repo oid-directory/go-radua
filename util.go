@@ -21,22 +21,15 @@ var (
 
 func deriveTTL(ent record, minutes ...any) (m int) {
        if len(minutes) > 0 {
-               m = assertTTL(minutes[0])
+		m = assertTTL(minutes[0])
        } else {
-                // Order:
-                //  - Try COLLECTIVE entry TTL, else ...
-                //  - Fallback to explicit entry TTL, else ...
-                //  - Fallback to Profile TTL, else ...
-                //  - Fallback to radua.DefaultRATTL
-                if ttl := ent.CTTL(); ttl != "" {
-                        m = assertTTL(ttl)
-                } else if ttl = ent.TTL(); ttl != "" {
-                        m = assertTTL(ttl)
-                } else if ttl = ent.Profile().TTL(); ttl != "" {
-                        m = assertTTL(ttl)
-                }
+		m = assertTTL(selectTTL(ent.Profile().TTL(),
+			ent.TTL(), ent.CTTL()))
        }
 
+	// Package default TTL (DefaultRATTL var;
+	// only used if all of the above were
+	// effectively zero (0))
        if m <= 0 {
                m = DefaultRATTL
        }
@@ -44,21 +37,24 @@ func deriveTTL(ent record, minutes ...any) (m int) {
        return
 }
 
-func selectTTL(lttl, cttl string) string {
-	var ttl string
+func selectTTL(pttl, ettl, cttl string) (ttl string) {
+	// TTL Precedence:
+	//  - 1. Profile TTL
+	//  - 2. COLLECTIVE entry TTL (overrides #1)
+	//  - 3. Explicit entry TTL (overrides #2)
+	if len(pttl) > 0 {
+		ttl = pttl
+	}
+
 	if len(cttl) > 0 {
 		ttl = cttl
 	}
 
-	if len(lttl) > 0 {
-		ttl = lttl
+	if len(ettl) > 0 {
+		ttl = ettl
 	}
 
-	if len(ttl) == 0 {
-		return ``
-	}
-
-	return ttl
+	return
 }
 
 func assertTTL(ttl any) (t int) {
