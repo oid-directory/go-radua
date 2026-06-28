@@ -21,9 +21,9 @@ var DefaultRATTL = 1440 // one (1) day
 record describes any instance of *[radir.Registration] and *[radir.Registrant].
 */
 type record interface {
-	DN()      string
-	TTL()     string
-	CTTL()    string
+	DN() string
+	TTL() string
+	CTTL() string
 	Profile() *radir.DITProfile
 }
 
@@ -76,16 +76,16 @@ until expiry.
 func (r *Cache) TTL(dn string) int {
 	var ttl int = -1
 	if !r.IsZero() && len(dn) > 0 {
-        	r.lock.Lock()
-        	defer r.lock.Unlock()
+		r.lock.Lock()
+		defer r.lock.Unlock()
 
 		ttl = 0
-        	if item, _ := r.entries[lc(dn)]; item.Value != nil {
+		if item, _ := r.entries[lc(dn)]; item.Value != nil {
 			ttl = int(item.Expiry.Sub(time.Now()).Minutes())
 			if ttl <= 0 {
 				ttl = 0
 			}
-        	}
+		}
 	}
 	return ttl
 }
@@ -630,5 +630,5 @@ func (r *Cache) Load(filename string) error {
 }
 
 var (
-	unwritableCacheErr    error = errors.New("Cache is uninitialized or frozen")
+	unwritableCacheErr error = errors.New("Cache is uninitialized or frozen")
 )

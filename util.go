@@ -20,21 +20,21 @@ var (
 )
 
 func deriveTTL(ent record, minutes ...any) (m int) {
-       if len(minutes) > 0 {
+	if len(minutes) > 0 {
 		m = assertTTL(minutes[0])
-       } else {
+	} else {
 		m = assertTTL(selectTTL(ent.Profile().TTL(),
 			ent.TTL(), ent.CTTL()))
-       }
+	}
 
 	// Package default TTL (DefaultRATTL var;
 	// only used if all of the above were
 	// effectively zero (0))
-       if m <= 0 {
-               m = DefaultRATTL
-       }
+	if m <= 0 {
+		m = DefaultRATTL
+	}
 
-       return
+	return
 }
 
 func selectTTL(pttl, ettl, cttl string) (ttl string) {
