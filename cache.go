@@ -21,9 +21,10 @@ var DefaultRATTL = 1440 // one (1) day
 record describes any instance of *[radir.Registration] and *[radir.Registrant].
 */
 type record interface {
-	DN() string
-	TTL() string
-	CTTL() string
+	DN()      string
+	TTL()     string
+	CTTL()    string
+	Profile() *radir.DITProfile
 }
 
 /*
@@ -595,10 +596,10 @@ func newExpiry(m int) time.Time {
 }
 
 /*
-Write returns an error following an attempt to write the current contents
+Dump returns an error following an attempt to write the current contents
 of the receiver instance to the filename indicated.
 */
-func (r *Cache) Write(filename string) (err error) {
+func (r *Cache) Dump(filename string) (err error) {
 	if !r.IsZero() {
 		var file *os.File
 		if file, err = os.Create(filename); err == nil {

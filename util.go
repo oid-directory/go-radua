@@ -23,11 +23,18 @@ func deriveTTL(ent record, minutes ...any) (m int) {
        if len(minutes) > 0 {
                m = assertTTL(minutes[0])
        } else {
-		if ttl := ent.CTTL(); ttl != "" {
-			m = assertTTL(ttl)
-		} else if ttl = ent.TTL(); ttl != "" {
-			m = assertTTL(ttl)
-		}
+                // Order:
+                //  - Try COLLECTIVE entry TTL, else ...
+                //  - Fallback to explicit entry TTL, else ...
+                //  - Fallback to Profile TTL, else ...
+                //  - Fallback to radua.DefaultRATTL
+                if ttl := ent.CTTL(); ttl != "" {
+                        m = assertTTL(ttl)
+                } else if ttl = ent.TTL(); ttl != "" {
+                        m = assertTTL(ttl)
+                } else if ttl = ent.Profile().TTL(); ttl != "" {
+                        m = assertTTL(ttl)
+                }
        }
 
        if m <= 0 {
