@@ -40,7 +40,7 @@ func TestCache_Registration_offline(t *testing.T) {
 	cache.Add(me, 5)
 
 	// Call the DN from the cache as a Registration.
-	cached := cache.Registration(myReg.DN())
+	cached := cache.Registration(myReg.DN()).(*radir.Registration)
 
 	// Check its what we expected ...
 	if nf := cached.X680().N(); nf != "999" {
@@ -49,7 +49,7 @@ func TestCache_Registration_offline(t *testing.T) {
 	}
 
 	t.Logf("%s\n", cached.LDIF(2))
-	t.Logf("%s\n", cache.Registrant(cached.X660().FirstAuthorities()[0]).LDIF())
+	t.Logf("%s\n", cache.Registrant(cached.X660().FirstAuthorities()[0]).(*radir.Registrant).LDIF())
 }
 
 func TestRegistration_Marshal(t *testing.T) {

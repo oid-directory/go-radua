@@ -29,7 +29,8 @@ func ExampleCache_Registration() {
 
 func ExampleCache_Update() {
 	// very watered-down registration
-	reg := &radir.Registration{
+	var reg radir.Entry
+	reg = &radir.Registration{
 		R_DN: "n=999,n=56521,n=1,n=4,n=1,n=6,n=3,n=1,ou=Registrations,o=rA",
 	}
 
@@ -38,7 +39,7 @@ func ExampleCache_Update() {
 
 	// We update our reg (above) with additional information
 	// we forgot to add the first time around.
-	reg.X680().SetNameAndNumberForm("example(999)")
+	reg.(*radir.Registration).X680().SetNameAndNumberForm("example(999)")
 
 	// Now we update the copy of the reg in the cache
 	// without altering its TTL.
@@ -48,8 +49,26 @@ func ExampleCache_Update() {
 	reg = myCache.Registration("n=999,n=56521,n=1,n=4,n=1,n=6,n=3,n=1,ou=Registrations,o=rA")
 
 	// Check that cache-born reg has the newly added value.
-	fmt.Printf("NameAndNumberForm: %q", reg.X680().NameAndNumberForm())
+	fmt.Printf("NameAndNumberForm: %q", reg.(*radir.Registration).X680().NameAndNumberForm())
 	// Output: NameAndNumberForm: "example(999)"
+}
+
+func ExampleCache_Registration_byMap() {
+	var reg radir.Entry
+	reg = &radir.Registration{
+		R_DN: "n=999,n=56521,n=1,n=4,n=1,n=6,n=3,n=1,ou=Registrations,o=rA",
+	}
+
+	var c *Cache = NewCache(0)
+
+	// Here, we are caching the MAP representation of
+	// a *radir.Registration instance for 15 minutes.
+	c.Add(reg.(*radir.Registration).Map(), 15)
+
+	// call the cached entry back
+	reg = c.Registration("n=999,n=56521,n=1,n=4,n=1,n=6,n=3,n=1,ou=Registrations,o=rA")
+	fmt.Printf("DN: %s (from %T)", reg.DN(), reg)
+	// Output: DN: n=999,n=56521,n=1,n=4,n=1,n=6,n=3,n=1,ou=Registrations,o=rA (from radir.Map)
 }
 
 func ExampleCache_Registrant() {

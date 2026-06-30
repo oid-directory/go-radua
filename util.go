@@ -19,7 +19,7 @@ var (
 	hasPfx func(string, string) bool     = strings.HasPrefix
 )
 
-func deriveTTL(ent record, minutes ...any) (m int) {
+func deriveTTL(ent radir.Entry, minutes ...any) (m int) {
 	if len(minutes) > 0 {
 		m = assertTTL(minutes[0])
 	} else {

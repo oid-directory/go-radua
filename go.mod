@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	github.com/go-ldap/ldap/v3 v3.4.13
-	github.com/oid-directory/go-radir v0.0.10
+	github.com/oid-directory/go-radir v0.0.16
 )
 
 require (

@@ -136,7 +136,7 @@ the OID Directory I-D series.
 [registrantID]: https://datatracker.ietf.org/doc/html/draft-coretta-oiddir-schema#section-2.3.34
 [dotNotation]: https://datatracker.ietf.org/doc/html/draft-coretta-oiddir-schema#section-2.3.2
 */
-func (r *DUA) Read(e string, dest any) (fromCache bool, err error) {
+func (r *DUA) Read(e string, dest radir.Entry) (fromCache bool, err error) {
 	if r.IsZero() {
 		err = errors.New("Receiver instance is nil")
 		return
@@ -150,11 +150,7 @@ func (r *DUA) Read(e string, dest any) (fromCache bool, err error) {
 	case *radir.Registrant:
 		fromCache, err = r.readRegistrant(e, pro, tv)
 	case *radir.Subentry:
-		//err = r.readSubentry(e, pro, tv)
-		//case *radir.Subentry:
-		//	tv = pro.NewSubentry()
-		//	dn = e
-		//	dest = tv
+		fromCache, err = r.readSubentry(e, pro, tv)
 	default:
 		err = errors.New("Unsupported destination type for read")
 	}
@@ -204,42 +200,51 @@ func (r *DUA) readRegistrant(e string, pro *radir.DITProfile, dest *radir.Regist
 	return
 }
 
-func (r *DUA) readSubentry(cn, parent string, pro *radir.DITProfile, dest *radir.Subentry) (
+func (r *DUA) readSubentry(dn string, pro *radir.DITProfile, dest *radir.Subentry) (
 	fromCache bool,
 	err error,
 ) {
-	if dest.IsZero() || cn == "" || parent == "" {
+
+	if dest.IsZero() || dn == "" {
 		err = destNotInitErr
 		return
 	}
 
-	dn := `cn=` + cn + `,` + parent
 	srf := `(objectClass=subentry)`
 	dest.SetDN(dn)
 
-	fromCache, err = r.getOrRetrieve(dn, srf, dest.Marshal)
+	fromCache, err = r.getOrRetrieve(dn, srf, dest)
 	return
 }
 
-func (r *DUA) getOrRetrieve(dn, srf string, dest any) (fromCache bool, err error) {
+func (r *DUA) getOrRetrieve(dn, srf string, dest radir.Entry) (fromCache bool, err error) {
 
-	selector := radir.AttributeSelector{}
-	sra := selector.All()
+	// Perform a pre-emptive read of the LDAP backend for the specified
+	// DN (and *ONLY* with a request of the DN attribute and NO others).
+	// If the return code is anything other than zero (0), a.k.a. success,
+	// the request is denied. This helps to prevent unauthorized disclosure
+	// of sensitive (whole) entries.
+	asr := ldap.NewSearchRequest(dn, 0, 0, 0, 0, false, srf, []string{"dn"}, nil)
+	if _, err = r.dua.Search(asr); err != nil && !ldap.IsErrorWithCode(err, uint16(0)) {
+		return
+	}
 
 	if !r.ech.IsZero() {
 		switch kind := r.ech.Kind(dn); kind {
 		case "registration":
-			if _, fromCache = dest.(*radir.Registration); fromCache {
-				(*dest.(*radir.Registration)) = (*r.ech.Registration(dn))
-			}
+			dest = r.ech.Registration(dn)
 		case "registrant":
-			if _, fromCache = dest.(*radir.Registrant); fromCache {
-				(*dest.(*radir.Registrant)) = (*r.ech.Registrant(dn))
-			}
+			dest = r.ech.Registrant(dn)
+		case "subentry":
+			dest = r.ech.Subentry(dn)
 		}
+		fromCache = dest != nil
 	}
 
 	if !fromCache {
+		selector := radir.AttributeSelector{}
+		sra := selector.All()
+
 		// Entry was not cached, or cache is disabled.
 		sr := ldap.NewSearchRequest(dn, 0, 0, 0, 0, false, srf, sra, nil)
 
@@ -251,7 +256,7 @@ func (r *DUA) getOrRetrieve(dn, srf string, dest any) (fromCache bool, err error
 			}
 
 			if err = res.Entries[0].UnmarshalFunc(dest, unmarshalFunc); err == nil {
-				r.ech.Add(dest, deriveTTL(dest.(record))) // ignored if cache is disabled.
+				r.ech.Add(dest, radir.TTLPrecedenceFromEntry(dest))
 			}
 		}
 	}

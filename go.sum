@@ -28,6 +28,16 @@ github.com/oid-directory/go-radir v0.0.0-20260624030901-57182bf9c11a h1:zhNaWo0f
 github.com/oid-directory/go-radir v0.0.0-20260624030901-57182bf9c11a/go.mod h1:2zi49APxGPNINTTklExKwjzrwkJxaI3Bi6CrM6irbBY=
 github.com/oid-directory/go-radir v0.0.10 h1:/G4s4ej8JAknt3QeFAiXUGUh1qLD54X1NpH/P/NF5Wk=
 github.com/oid-directory/go-radir v0.0.10/go.mod h1:2zi49APxGPNINTTklExKwjzrwkJxaI3Bi6CrM6irbBY=
+github.com/oid-directory/go-radir v0.0.12 h1:AlFxhe+tdZmWqUAqq02VUaI3DjoFm72aCHgiRVN5ajA=
+github.com/oid-directory/go-radir v0.0.12/go.mod h1:2zi49APxGPNINTTklExKwjzrwkJxaI3Bi6CrM6irbBY=
+github.com/oid-directory/go-radir v0.0.13 h1:8KBfFg6Mxcsao0pBvFUqKA8az0lua57qtN1T+SxvNy4=
+github.com/oid-directory/go-radir v0.0.13/go.mod h1:2zi49APxGPNINTTklExKwjzrwkJxaI3Bi6CrM6irbBY=
+github.com/oid-directory/go-radir v0.0.14 h1:aHW6+8649Np/qq2tdoC9SxzK2vILvAUhLllNAA64MMs=
+github.com/oid-directory/go-radir v0.0.14/go.mod h1:2zi49APxGPNINTTklExKwjzrwkJxaI3Bi6CrM6irbBY=
+github.com/oid-directory/go-radir v0.0.15 h1:JlJ9NRxrAevRsqQpaFlULT6TPkfBpYWxu/wP0g8kUlk=
+github.com/oid-directory/go-radir v0.0.15/go.mod h1:2zi49APxGPNINTTklExKwjzrwkJxaI3Bi6CrM6irbBY=
+github.com/oid-directory/go-radir v0.0.16 h1:a0FjcrW5YwNGExidN7RBaJew2t3IrGRcHbXGxEbDJlc=
+github.com/oid-directory/go-radir v0.0.16/go.mod h1:2zi49APxGPNINTTklExKwjzrwkJxaI3Bi6CrM6irbBY=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=

@@ -2,7 +2,7 @@ package radua
 
 /*
 cache.go offers a generic, thread-safe, in-memory
-registration/registrant caching subsystem.
+caching subsystem for radir.Entry interface values.
 */
 
 import (
@@ -15,26 +15,23 @@ import (
 	"github.com/oid-directory/go-radir"
 )
 
+/*
+DefaultRATTL serves as a fallback TTL value to be used
+to direct the *[Cache] instance as to how long a given
+[radir.Entry] instance should be cached. This value is
+only taken into account if all other TTL sources are
+effectively zero (0).
+*/
 var DefaultRATTL = 1440 // one (1) day
 
 /*
-record describes any instance of *[radir.Registration] and *[radir.Registrant].
-*/
-type record interface {
-	DN() string
-	TTL() string
-	CTTL() string
-	Profile() *radir.DITProfile
-}
-
-/*
-cachedEntry contains a record instance alongside an expiry [time.Time] instance.
+cachedEntry contains any [radir.Entry] instance alongside an expiry [time.Time] instance.
 
 Instances of this type are stored within an instance of *[Cache] and need not
 be managed directly by the user.
 */
 type cachedEntry struct {
-	Value  record
+	Value  radir.Entry
 	Expiry time.Time
 }
 
@@ -92,9 +89,8 @@ func (r *Cache) TTL(dn string) int {
 
 /*
 Cache is a thread-safe, memory-based caching type, meant to store any
-number of *[radir.Registration] or *[radir.Registrant] instances for
-the purpose of reducing LDAP network utilization. Caching is covered
-in the [RADUA] and [RASCHEMA] IDs.
+number of [radir.Entry] instances for the purpose of reducing LDAP
+network utilization. Caching is covered in the [RADUA] and [RASCHEMA] IDs.
 
 Instances of either type are associated with their respective LDAP DNs,
 which are queried immediately prior to an LDAP Search.
@@ -195,7 +191,7 @@ func (r *Cache) IsZero() bool {
 
 /*
 Len returns the integer length of the receiver instance, thereby revealing
-how many *[radir.Registration] and/or *[radir.Registrant] instances are cached.
+how many [radir.Entry] instances are cached.
 
 This method does not take expiration into account, nor does its use trigger any
 expiration purges.
@@ -209,8 +205,8 @@ func (r *Cache) Len() (l int) {
 }
 
 /*
-Cap returns the maximum permitted number of *[radir.Registration] and/or
-*[radir.Registrant] instances that may be cached.
+Cap returns the maximum permitted number of [radir.Entry] instances that
+may be cached.
 
 A value of zero (0) indicates no limits are imposed upon caching requests
 of this form.
@@ -224,40 +220,72 @@ func (r *Cache) Cap() (c int) {
 }
 
 /*
-Registration returns an instance of *[radir.Registration] following
-a search for the input dn value within the receiver instance.
+Registration returns an instance of [radir.Entry] following a search for the
+input dn value within the receiver instance.
 
 A nil return value can indicate any of the following:
 
   - Instance had expired and has since been purged, or has not yet been cached
   - Instance was found but was nil, indicating caching is disabled for the entry
+  - Instance was neither a *[radir.Registration] nor a [radir.Map]
 
 Case is not significant in the distinguished name matching process.
 */
-func (r *Cache) Registration(dn string) (entry *radir.Registration) {
-	e := r.call(dn, "registration")
-	entry, _ = e.(*radir.Registration)
+func (r *Cache) Registration(dn string) (entry radir.Entry) {
+	switch tv := r.call(dn, "registration").(type) {
+	case *radir.Registration:
+		entry = tv
+	case radir.Map:
+		entry = tv
+	}
 	return entry
 }
 
 /*
-Registrant returns an instance of *[radir.Registrant] following
-a search for the input dn value within the receiver instance.
+Registrant returns an instance of [radir.Entry] following a search
+for the input dn value within the receiver instance.
 
 A nil return value can indicate any of the following:
 
   - Instance had expired and has since been purged, or has not yet been cached
   - Instance was found but was nil, indicating caching is disabled for the entry
+  - Instance was neither a *[radir.Registrant] nor a [radir.Map]
 
 Case is not significant in the distinguished name matching process.
 */
-func (r *Cache) Registrant(dn string) (entry *radir.Registrant) {
-	e := r.call(dn, "registrant")
-	entry, _ = e.(*radir.Registrant)
+func (r *Cache) Registrant(dn string) (entry radir.Entry) {
+	switch tv := r.call(dn, "registrant").(type) {
+	case *radir.Registrant:
+		entry = tv
+	case radir.Map:
+		entry = tv
+	}
 	return entry
 }
 
-func (r *Cache) call(dn, typ string) any {
+/*
+Subentry returns an instance of [radir.Entry] following a search for the
+input dn value within the receiver instance.
+
+A nil return value can indicate any of the following:
+
+  - Instance had expired and has since been purged, or has not yet been cached
+  - Instance was found but was nil, indicating caching is disabled for the entry
+  - Instance was neither a *[radir.Subentry] nor a [radir.Map]
+
+Case is not significant in the distinguished name matching process.
+*/
+func (r *Cache) Subentry(dn string) (entry radir.Entry) {
+	switch tv := r.call(dn, "subentry").(type) {
+	case *radir.Subentry:
+		entry = tv
+	case radir.Map:
+		entry = tv
+	}
+	return entry
+}
+
+func (r *Cache) call(dn, typ string) radir.Entry {
 	if r.IsZero() {
 		return nil
 	}
@@ -265,23 +293,33 @@ func (r *Cache) call(dn, typ string) any {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	key := lc(dn)
-
 	isTypeOK := func(item cachedEntry) (ok bool) {
 		if item.Value != nil {
-			if typ == "registration" {
-				_, ok = item.Value.(*radir.Registration)
-			} else if typ == "registrant" {
-				_, ok = item.Value.(*radir.Registrant)
+			switch tv := item.Value.(type) {
+			case *radir.Registration:
+				ok = typ == "registration"
+			case *radir.Registrant:
+				ok = typ == "registrant"
+			case *radir.Subentry:
+				ok = typ == "subentry"
+			case radir.Map:
+				// map could represent any of the above,
+				// so we check the objectClass []string
+				// type to examine whether a class name
+				// matches 'typ'.
+				if oc, found := tv.StringsValue(`objectClass`); found {
+					ok = strInSlice(typ, oc)
+				}
 			}
 		}
 		return
 	}
 
-	item, ok := r.entries[key]
+	idx := lc(dn)
+	item, ok := r.entries[idx]
 	if ok && isTypeOK(item) {
 		if time.Now().After(item.Expiry) {
-			r.delete(key)
+			r.delete(idx)
 			return nil
 		}
 	}
@@ -291,7 +329,8 @@ func (r *Cache) call(dn, typ string) any {
 
 /*
 Exists returns a Boolean value indicative of whether the specified
-distinguished name was found within the receiver instance.
+distinguished name was found within the receiver instance and was
+associated with a particular [radir.Entry] instance.
 
 Case is not significant in the distinguished name matching process.
 
@@ -309,9 +348,9 @@ func (r *Cache) Exists(dn string) (exists bool) {
 }
 
 /*
-Kind returns the string literals "registration" or "registrant"
-based on the kind of entry associated with the input distinguished
-name value.
+Kind returns the string literals "subentry", "registration" or
+"registrant" based on the kind of entry associated with the
+input distinguished name value.
 
 Case is not significant in the distinguished name matching process.
 
@@ -326,11 +365,21 @@ func (r *Cache) Kind(dn string) (kind string) {
 
 	if !r.IsZero() {
 		if item, ok := r.entries[lc(dn)]; ok {
-			switch item.Value.(type) {
+			switch tv := item.Value.(type) {
+			case *radir.Subentry:
+				kind = "subentry"
 			case *radir.Registration:
 				kind = "registration"
 			case *radir.Registrant:
 				kind = "registrant"
+			case radir.Map:
+				if tv.Registration() {
+					kind = "registration"
+				} else if tv.Registrant() {
+					kind = "registrant"
+				} else if tv.Subentry() {
+					kind = "subentry"
+				}
 			}
 		}
 	}
@@ -340,8 +389,7 @@ func (r *Cache) Kind(dn string) (kind string) {
 
 /*
 Keys returns slices of cached element DNs, each representing a
-*[radir.Registration] or *[radir.Registrant] instances instance
-present within the receiver.
+[radir.Entry] instance present within the receiver.
 
 This method does not take expiration into account, nor does its
 use trigger any expiration purges.
@@ -363,10 +411,9 @@ func (r *Cache) Keys() (keys []string) {
 }
 
 /*
-Touch will refresh the targeted *[radir.Registration] or *[radir.Registrant]
-instance by the input dn value, and replace its Expiry struct field with a
-fresh [time.Time] instance based upon the input minutes value, which may be
-a string or an int.
+Touch will refresh the targeted [radir.Entry] instance by the input dn value,
+and replace its Expiry struct field with a fresh [time.Time] instance based
+upon the input minutes value, which may be a string or an int.
 
 In addition to preserving instances past their original expiration time,
 this method may be used to "resurrect" instances that have since expired
@@ -384,15 +431,15 @@ func (r *Cache) Touch(dn string, minutes ...any) {
 		defer r.lock.Unlock()
 
 		if item, _ := r.entries[lc(dn)]; item.Value != nil {
-			item.Expiry = newExpiry(deriveTTL(item.Value, minutes...))
+			item.Expiry = newExpiry(radir.TTLPrecedenceFromEntry(item.Value, minutes...))
 		}
 	}
 }
 
 /*
-Add assigns the input *[radir.Registration] or *[radir.Registrant] instance to
-the receiver instance. The minutes input value (which may be a string or an int)
-should correspond to one of the following states:
+Add assigns the input [radir.Entry] instance to the receiver instance. The
+minutes input value (which may be a string or an int) should correspond to
+one of the following states:
 
   - <=0 (entry default) indicates no caching for the indicated instance (always call LDAP)
   - All other positive values indicate a cached lifespan in minutes (cache and don't call LDAP for this entry until N minutes)
@@ -411,25 +458,25 @@ Input instances may be cached at any point, whether modified or not.
 func (r *Cache) Add(entry any, minutes ...any) {
 	if r.writable() {
 		switch tv := entry.(type) {
-		case record:
+		case radir.Entry:
 			if tv != nil && len(tv.DN()) > 0 {
-				r.cache(tv, deriveTTL(tv, minutes...))
+				r.cache(tv, radir.TTLPrecedenceFromEntry(tv, minutes...))
 			}
 		}
 	}
 }
 
 /*
-Update replaces the specified *[radir.Registration] or *[radir.Registrant]
-entry in the receiver with a newer copy without modifying its current TTL.
-If the entry is expired, this method will do nothing.
+Update replaces the specified [radir.Entry] instance in the receiver with
+a newer copy without modifying its current TTL. If the entry is expired,
+this method will do nothing.
 
 Use of this method will not have any effect if the receiver is currently
 frozen or nil.
 */
 func (r *Cache) Update(entry any) {
 	if r.writable() {
-		if assert, ok := entry.(record); ok {
+		if assert, ok := entry.(radir.Entry); ok {
 			dn := lc(assert.DN())
 			if item, found := r.entries[dn]; found && !r.Expired(dn) {
 				item.Value = assert
@@ -440,8 +487,8 @@ func (r *Cache) Update(entry any) {
 }
 
 /*
-Remove deletes the specified *[radir.Registration] and/or *[radir.Registrant]
-instances from the receiver instance.
+Remove deletes the specified [radir.Entry] instance from the receiver
+instance.
 
 Case is not significant in the distinguished name matching process.
 */
@@ -462,7 +509,7 @@ func (r *Cache) full() bool {
 
 func (r *Cache) writable() bool { return !(r.IsZero() || r.Frozen()) }
 
-func (r *Cache) cache(entry record, minutes int) {
+func (r *Cache) cache(entry radir.Entry, minutes int) {
 	if !r.Exists(entry.DN()) {
 		// reg is not presently cached.
 		if r.full() {
