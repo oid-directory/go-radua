@@ -453,15 +453,13 @@ This method is meant for use either of the following scenarios:
   - Automatically, whereby an 'rATTL' or 'c-rATTL' value has been set within the RA DIT or the entry itself, and is being observed following retrieval one or more LDAP entries to be marshaled
   - Manually, whereby an instance crafted by the user is being deliberately cached, whether or not LDAP is presently involved
 
-Input instances may be cached at any point, whether modified or not.
+Input instances may be cached at any point, whether modified or not, provided
+the receiver instance is not in a frozen or nil state.
 */
-func (r *Cache) Add(entry any, minutes ...any) {
+func (r *Cache) Add(entry radir.Entry, minutes ...any) {
 	if r.writable() {
-		switch tv := entry.(type) {
-		case radir.Entry:
-			if tv != nil && len(tv.DN()) > 0 {
-				r.cache(tv, radir.TTLPrecedenceFromEntry(tv, minutes...))
-			}
+		if entry != nil && len(entry.DN()) > 0 {
+			r.cache(entry, radir.TTLPrecedenceFromEntry(entry, minutes...))
 		}
 	}
 }
@@ -474,14 +472,12 @@ this method will do nothing.
 Use of this method will not have any effect if the receiver is currently
 frozen or nil.
 */
-func (r *Cache) Update(entry any) {
+func (r *Cache) Update(entry radir.Entry) {
 	if r.writable() {
-		if assert, ok := entry.(radir.Entry); ok {
-			dn := lc(assert.DN())
-			if item, found := r.entries[dn]; found && !r.Expired(dn) {
-				item.Value = assert
-				r.entries[dn] = item
-			}
+		dn := lc(entry.DN())
+		if item, found := r.entries[dn]; found && !r.Expired(dn) {
+			item.Value = entry
+			r.entries[dn] = item
 		}
 	}
 }

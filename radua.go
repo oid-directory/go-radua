@@ -35,6 +35,7 @@ be available.
 func New(cfg *radir.DUAConfig, dua ...ldap.Client) (radua *DUA, err error) {
 
 	if cfg != nil {
+		// add a dead cache just to avoid panics
 		radua = &DUA{cfg: cfg, ech: invalidCache}
 		if len(dua) > 0 {
 			if dua[0] != nil {
@@ -44,9 +45,6 @@ func New(cfg *radir.DUAConfig, dua ...ldap.Client) (radua *DUA, err error) {
 	} else {
 		err = errors.New("One or more input instance are nil")
 	}
-
-	// add a dead cache just to avoid panics
-	radua.ech = invalidCache
 
 	return
 }
@@ -127,30 +125,45 @@ Note that dest will be obliterated through re-initialization, thus user
 driven initialization is unnecessary.
 
 The purpose of this method is to automatically acquire and marshal the
-intended *[ldap.Entry] instance from the upstream RA DSA into an instance
-of *[radir.Registration]. The search scope for this operation is implicitly
-"[baseObject]", which is the recommended default scope within the terms of
-the OID Directory I-D series.
+intended [radir.Entry] instance from the upstream RA DSA. The search
+scope for this operation is implicitly "[baseObject]", which is the
+recommended default scope within the terms of the OID Directory I-D
+series.
+
+If the (optional) variadic useMap argument contains a value of true, any
+instance of *[radir.Registration], *[radir.Registrant] or *[radir.Subentry]
+(dest) shall be handled in [radir.Map] representation.  If a bonafide
+[radir.Map] is passed as dest, it is handled as-is.
 
 [baseObject]: https://datatracker.ietf.org/doc/html/rfc4511#section-4.5.1.1
 [registrantID]: https://datatracker.ietf.org/doc/html/draft-coretta-oiddir-schema#section-2.3.34
 [dotNotation]: https://datatracker.ietf.org/doc/html/draft-coretta-oiddir-schema#section-2.3.2
 */
-func (r *DUA) Read(e string, dest radir.Entry) (fromCache bool, err error) {
+func (r *DUA) Read(e string, dest radir.Entry, useMap ...bool) (fromCache bool, err error) {
 	if r.IsZero() {
 		err = errors.New("Receiver instance is nil")
 		return
 	}
 
-	pro := r.cfg.Profile()
-
 	switch tv := dest.(type) {
 	case *radir.Registration:
-		fromCache, err = r.readRegistration(e, pro, tv)
+		fromCache, err = r.readRegistration(e, tv)
 	case *radir.Registrant:
-		fromCache, err = r.readRegistrant(e, pro, tv)
+		fromCache, err = r.readRegistrant(e, tv)
 	case *radir.Subentry:
-		fromCache, err = r.readSubentry(e, pro, tv)
+		fromCache, err = r.readSubentry(e, tv)
+	case radir.Map:
+		if oc, found := tv.StringsValue(`objectClass`); found {
+			if strInSlice(`registration`, oc) {
+				fromCache, err = r.readRegistration(e, tv)
+			} else if strInSlice(`registrant`, oc) {
+				fromCache, err = r.readRegistrant(e, tv)
+			} else if strInSlice(`subentry`, oc) {
+				fromCache, err = r.readSubentry(e, tv)
+			} else {
+				err = errors.New("Unsupported map type for read")
+			}
+		}
 	default:
 		err = errors.New("Unsupported destination type for read")
 	}
@@ -158,60 +171,78 @@ func (r *DUA) Read(e string, dest radir.Entry) (fromCache bool, err error) {
 	return
 }
 
-func (r *DUA) readRegistration(e string, pro *radir.DITProfile, dest *radir.Registration) (
+func (r *DUA) readRegistration(e string, dest radir.Entry) (
 	fromCache bool,
 	err error,
 ) {
-	if dest.IsZero() {
+	if dest == nil || e == "" {
 		err = destNotInitErr
 		return
 	}
 
-	dest.R_DITProfile = pro
+	pro := dest.Profile()
 
 	funk := radir.DotNotToDN3D
 	if pro.Model() == radir.TwoDimensional {
 		funk = radir.DotNotToDN2D
 	}
 
-	dest.SetDN(e, funk)
+	switch tv := dest.(type) {
+	case *radir.Registration:
+		tv.SetDN(e, funk)
+	case radir.Map:
+		if tv[`dn`], err = funk(e,tv); err != nil {
+			return
+		}
+	}
 	srf := `(objectClass=registration)`
 
 	fromCache, err = r.getOrRetrieve(dest.DN(), srf, dest)
 	return
 }
 
-func (r *DUA) readRegistrant(e string, pro *radir.DITProfile, dest *radir.Registrant) (
+func (r *DUA) readRegistrant(e string, dest radir.Entry) (
 	fromCache bool,
 	err error,
 ) {
-	if dest.IsZero() {
+	if dest == nil || e == "" {
 		err = destNotInitErr
 		return
 	}
 
-	dest.R_DITProfile = pro
+	pro := dest.Profile()
 
 	dn := `registrantID=` + e + `,` + pro.RegistrantBase()
 	srf := `(objectClass=registrant)`
-	dest.SetDN(e)
+
+	switch tv := dest.(type) {
+	case *radir.Registrant:
+		tv.SetDN(e)
+	case radir.Map:
+		tv[`dn`] = e
+	}
 
 	fromCache, err = r.getOrRetrieve(dn, srf, dest)
 	return
 }
 
-func (r *DUA) readSubentry(dn string, pro *radir.DITProfile, dest *radir.Subentry) (
+func (r *DUA) readSubentry(dn string, dest radir.Entry) (
 	fromCache bool,
 	err error,
 ) {
 
-	if dest.IsZero() || dn == "" {
+	if dest == nil || dn == "" {
 		err = destNotInitErr
 		return
 	}
 
 	srf := `(objectClass=subentry)`
-	dest.SetDN(dn)
+	switch tv := dest.(type) {
+	case *radir.Subentry:
+		tv.SetDN(dn)
+	case radir.Map:
+		tv[`dn`] = dn
+	}
 
 	fromCache, err = r.getOrRetrieve(dn, srf, dest)
 	return

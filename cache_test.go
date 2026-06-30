@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/go-ldap/ldap/v3"
 	"github.com/oid-directory/go-radir"
 )
 
@@ -138,8 +137,6 @@ func TestCache_codecov(t *testing.T) {
 	c.Expired("fargus")
 	c.Expired("")
 	c.Add(nil, -1)
-	c.Add(&ldap.Entry{}, 1)
-	c.Add(&ldap.Entry{DN: "fargus"}, 1)
 	c.Registration("blarg")
 	c.Registrant("blarg")
 	c.Kind(`fargus`)
@@ -166,7 +163,6 @@ func TestCache_codecov(t *testing.T) {
 	c.Kind(`fakeAuthy`)
 	c.Touch(``, 5)
 	c.Remove()
-	c.Add(&ldap.Entry{}, 1)
 	c.Registration(`faker`)
 	c.Add(&radir.Registration{R_DN: `otherFaker`}, 1)
 	c.Kind(`otherFaker`)
